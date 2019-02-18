@@ -11,7 +11,6 @@ Icon?
 *.html
 !header.html
 !footer.html
-!analyses.html
 
 # Python
 *.pyc
