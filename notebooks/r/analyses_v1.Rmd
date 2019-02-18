@@ -1,0 +1,335 @@
+---
+title: "Data Science Applied to Management Consulting Engagements"
+author: "Tutorial I"
+date: '`r Sys.Date()`'
+output:
+  html_document:
+    highlight: tango
+    theme: spacelab
+    toc: yes
+    toc_float: true
+    toc_depth: 2
+    number_sections: no
+    fig_height: 4
+    fig_width: 10
+    include:
+      before_body: header.html
+      after_body: footer.html
+  html_notebook:
+    highlight: tango
+    theme: spacelab
+    toc: yes
+    toc_float: false
+    toc_depth: 2
+    number_sections: no
+    fig_height: 4
+    fig_width: 10
+    include:
+      before_body: header.html
+      after_body: footer.html
+description: Notebook related to the first tutorial.
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+# Executive summary
+
+We show with this notebook (written in [RMarkdown](https://rmarkdown.rstudio.com/)) how to use literate programming for accomplishing and presenting analyses.
+
+In this notebook, we assume the client owns an efficient gas-fired power plant that is offered every day in the spot market. The dispatch team is responsible for scheduling the plant to maximize its margin while meeting all its dynamic constraints (e.g., start-up time, ramping, etc.).
+
+However, a simple analysis shows the plant is not adequately scheduled as it often runs when the cash margin is negative or not at maximum capacity when the cash margin is positive.
+
+The way the dispatch team schedules the plant suggests that the client sold the energy forward (i.e., bought forward natural gas and sold forward electricity) and, thus, does not look at the cash markets to improve the plant’s margin. If the dispatch team were scheduling the plant based on cash prices, they would have increased the cash margin by at least **$1.63 million** in 2015 and **$2.90 million** in 2016.
+
+# Analyses {.tabset .tabset-pills}
+
+## Preamble
+
+We define in this section all the critical parameters used by the notebook and source the associated scripts. We use scripts to make the notebook more natural to read in RMarkdown.
+
+```{r libraries, echo=FALSE, message=FALSE, warning=FALSE, include=FALSE, tidy=TRUE, results="hide"}
+## Load the various packages required to run this notebook
+require(ggthemes)
+library(grid)
+require(gridExtra)
+require(waterfalls)
+```
+
+```{r source, echo=TRUE, message=FALSE, warning=FALSE, include=TRUE, tidy=FALSE, results="hide"}
+## The script sourced here creates the following objects
+##   - df_all: All actual/historical data in one dataframe
+##   - df_carbon: Historical daily spot carbon prices
+##   - df_gas: Historical daily spot gas prices
+##   - df_gen: Actual hourly generation
+##   - df_power: Historical hourly day ahead power price
+##   - df_tgu: Gas-fired generating unit's attributes
+##   - df_util_daily: Daily periods
+##   - df_util_hourly: Hourly periods
+##   - plt_single_ts: Plot one time series
+##   - Pyxidr color palettes
+
+# Database used by this report
+database <- "../../data/processed/tutorial1.db"
+
+# Gas-fired generating unit's name used for the analysis
+gen_unit_name <- c("PP")
+
+source("./analyses.R")
+```
+
+### Gas-fired plant
+
+```{r tgu_parameters, echo=FALSE, message=FALSE, warning=FALSE, include=TRUE, tidy=TRUE, results="hide"}
+# These are parameters not found in the database
+df_tgu$om_pmin = c(3.55)  # Variable O&M cost at minimum load ($/MWh)
+df_tgu$om = c(2.80)       # Variable O&M cost at nominal load ($/MWh)
+df_tgu$om_duct = c(1.87)  # Variable O&M cost when duct fired is used($/MWh)
+df_tgu$tc <- 0.04         # Natural gas transportation cost ($/mmbtu)
+df_tgu$emission <- 117    # Carbon factor (lb/mmbtu)
+```
+
+We do all the analyses on gas-fired plant `r df_tgu$name` (“plant”) with the following attributes:
+
+* **Type**: `r df_tgu$type`
+* **Fuel**: Natural gas
+* **Power min**: `r sprintf("%.1f MW", df_tgu$powermin)`
+* **Power max**: `r sprintf("%.1f MW", df_tgu$powermax)`
+* **Including duct**: `r sprintf("%.1f MW", df_tgu$duct)`
+* **Efficiency at pmin**: `r sprintf("%.1f%%", 100*df_tgu$efficiency_pmin)`
+* **Efficiency**: `r sprintf("%.1f%%", 100*df_tgu$efficiency)`
+* **Efficiency of duct**: `r sprintf("%.1f%%", 100*df_tgu$efficiency_duct)`
+* **Power market**: `r df_tgu$market_name`
+* **Variable O&M**:  `r df_tgu$om`
+* **Gas transportation cost**: `r sprintf("$%.2f/mmbtu", df_tgu$tc)`
+* **Carbon factor**: `r sprintf("%.1f lb/mmbtu", df_tgu$emission)`
+
+## Clean spark spread
+
+The objective is to identify dispatch opportunities, i.e., determine when the plant should have been producing or not. The spark spread is the gross margin of a gas-fired power plant from selling a unit of electricity, having bought the natural gas required to produce this unit of electricity. A clean spark spread ("CSS") is when we take into account the cost associated with emitting CO2 --- not all markets charge yet for CO2 emissions.
+
+CSS is defined as follows:
+$$
+    p^P - \left(p^G + tc + p^C \times \frac{cf}{2204.62}\right) \times \frac{hr}{10^3} - om
+$$
+where
+
+* $cf$: Carbon factor (lb/mmbtu)
+* $hr$: Heat rate (btu/kWh)
+* $om$: Variable O&M ($/MWh)
+* $p^C$: Carbon price in $/tonne
+* $p^G$: Gas price in $/mmbtu
+* $p^P$: Power price in $/MWh
+* $tc$: Natural gas transportation cost ($/mmbtu)
+
+This is how it is implemented:
+```{r css, echo=TRUE, message=FALSE, warning=FALSE, include=TRUE, tidy=FALSE, results="hide"}
+css <- function(gu, type, pp, gp, cp){
+    # gu  : Gas-fired generating unit (dataframe)
+    # type: pmin, pmax or duct
+    # pp  : power price in $/MWh
+    # gp  : gas price in $/mmbtu
+    # cp  : carbon price in $/tonne
+
+    # heat rate in btu/kWh
+    hr <- switch(type, "pmin" = gu$heatrate_pmin, 
+                       "pmax" = gu$heatrate, 
+                       "duct" = gu$heatrate_duct)
+    # variable cost in $/MWh
+    vc <- switch(type, "pmin" = gu$om_pmin, 
+                       "pmax" = gu$om, 
+                       "duct" = gu$om_duct)
+
+    pp - (gp + gu$tc + cp * gu$emission /  2204.62) * hr / 1e3 - vc
+}
+```
+We have included variable O&M costs in our definition of CSS to represent the opportunities better.
+
+An efficient gas-fired plant takes time to start (e.g., 1 hour in a cold start) and has minimum uptime (e.g., 6 hours) and downtime to reduce the stress on the equipment. Therefore, we are going to group all the hours into on-peak and off-peak hours to take into account the lack of flexibility. Depending on the markets, on-peak hours are usually weekdays between 6 am and 10 pm. The rest of the hours are off-peak. We expect power prices to be higher during on-peak hours than off-peak ones.
+
+```{r plot_css_1, echo=FALSE, message=FALSE, warning=FALSE, include=TRUE, tidy=FALSE, results="hide"}
+df_plt <- df_all %>%
+    filter(gu == df_tgu$name) %>%                              # Only consider rows associated with current plant
+    mutate(css = css(df_tgu, "pmax", power, gas, carbon)) %>%  # Compute css for each hour
+    select(date, periodtype, generation, css) %>%              # Select only the variables used for the plot
+    group_by(date, periodtype) %>%                             # Aggregate by on-peak/off-peak
+    summarize(generation = mean(generation), css = mean(css))
+```
+
+The following graphic shows the distribution of CSS (on-peak/off-peak) where
+`r sprintf("%.1f%%", 100 * nrow(df_plt %>% filter(periodtype == "On-Peak" & css > 0)) / nrow(df_plt %>% filter(periodtype == "On-Peak")))`
+of the on-peak periods have a positive CSS while
+`r sprintf("%.1f%%", 100 * nrow(df_plt %>% filter(periodtype == "Off-Peak" & css > 0)) / nrow(df_plt %>% filter(periodtype == "Off-Peak")))`
+of the off-peak periods have a positive CSS.
+
+```{r plot_css_2, echo=FALSE, message=FALSE, warning=FALSE, include=TRUE, tidy=FALSE, results="hide"}
+ggplot(df_plt, aes(x = css, fill = periodtype)) + 
+    geom_density(alpha = .3) +
+    labs(x = "Clean Spark Spread ($/MWh)", y = "Density") +
+    xlim(-25, 25) +
+    scale_fill_manual(name = "Hours types", values = PyxidrTwoColours_palette) +
+    theme_economist()
+```
+
+We expect the plant not to produce when CSS is negative and produce at nominal capacity when CSS is large (e.g., higher than $5/MWh). However, the plant had produced above minimum load respectively **`r sprintf("%.1f%%", 100 * nrow(df_plt %>% filter(periodtype == "On-Peak" & generation > df_tgu$powermin & css < 0)) / nrow(df_plt %>% filter(periodtype == "On-Peak" & css < 0)))`**
+and
+**`r sprintf("%.1f%%", 100 * nrow(df_plt %>% filter(periodtype == "Off-Peak" & generation > df_tgu$powermin & css < 0)) / nrow(df_plt %>% filter(periodtype == "Off-Peak" & css < 0)))`**
+of the on-peak and off-peak periods when CSS was negative. Therefore, **there are some opportunities for better dispatching the plant**.
+
+This X-Y plot shows, among others, how often the plant was producing when CSS was negative. The plant should have produced when the CSS was positive, but it could have been in maintenance.
+```{r plot_css_3, echo=FALSE, message=FALSE, warning=FALSE, include=TRUE, tidy=FALSE, results="hide"}
+ggplot(df_plt, aes(x = css, y = generation)) + 
+    geom_point(colour = DarkGreyPyxidr) +
+    labs(x = "Clean Spark Spread ($/MWh)", y = "Generation (MWh/h") +
+    xlim(-20, 20) +
+    theme_economist() +
+    facet_grid(periodtype ~ .)
+```
+
+## Assessing the dispatch opportunity
+
+As we have seen, the plant could have made more profits if it had been better dispatched (or dispatched against market prices). We roughly compute the opportunity as follows:
+$$
+    \sum_{t} \left(\max\{css_t(pmax)\times pmax, css_t(duct)\times duct, 0\} - css_t(gen_t)\times gen_t \right)
+$$
+where
+
+* $css_t()$: Gross margin as a function of the energy produced in MW associated with period $t$ ($/MWh)
+* $duct$: Generating capcity including duct fired capacity (MW)
+* $gen_t$: Actual generation for period $t$ (MWh/h)
+* $pmax$: Nominal generating capacity (MW)
+* $t$: Period
+
+We do this calculation over all on-peak and off-peak periods. As the following graphics show, the dispatch opportunities are fairly significant. It is important to note that a more granular shaping (e.g., by the hour) will lead to more opportunities.
+
+```{r margin, echo=FALSE, message=FALSE, warning=FALSE, include=TRUE, tidy=FALSE, results="hide"}
+my_max <- function(a, b) {
+    ifelse(a > b, a, b)
+}
+
+css_interp <- function(p1, p2, css1, css2, p) {
+    # Get css through linear interpolation
+    (css2 - css1) / (p2 - p1) * (p - p1) + css1
+}
+
+margin <- function(gu, gen, css_pmin, css_pmax, css_duct) {
+    # gu: generating unit
+    # gen: generation in MWh/h
+    # css_pmin: clean spark spread at pmin in $/MWh
+    # css_pmax: clean spark spread at pmax in $/MWh
+    # css_duct: clean spark spread when duct firing is used in $/MWh
+    css <- ifelse(gen < gu$powermin, css_pmin, 
+                  ifelse(gen >= gu$powermin & gen < gu$powermax, css_interp(gu$powermin, gu$powermax, css_pmin, css_pmax, gen), 
+                         ifelse(gen >= gu$powermax & gen < gu$duct, css_interp(gu$powermax, gu$duct, css_pmax, css_duct, gen),
+                                css_duct)))
+    return(css * gen)
+}
+
+df_margins <- df_all %>%
+    filter(gu == df_tgu$name) %>%                                              # Only consider rows associated with current plant
+    mutate(opt_margin =                                                        # Optimal margin
+               my_max(my_max(
+                   css(df_tgu, "pmax", power, gas, carbon) * df_tgu$powermax,
+                   css(df_tgu, "duct", power, gas, carbon) * df_tgu$duct), 0),
+           act_margin =                                                        # Actual margin
+               margin(df_tgu, generation,
+                      css(df_tgu, "pmin", power, gas, carbon),
+                      css(df_tgu, "pmax", power, gas, carbon),
+                      css(df_tgu, "duct", power, gas, carbon))
+           ) %>%  
+    select(date, periodtype, year, opt_margin, act_margin) %>%                 # Select only the variables used for the plot
+    group_by(date, periodtype, year) %>%                                       # Aggregate by on-peak/off-peak and year
+    summarize(opt_margin = sum(opt_margin), act_margin = sum(act_margin))
+```
+
+```{r dispatch_opportunity, echo=FALSE, message=FALSE, warning=FALSE}
+years = c(2015, 2016)
+period_types = c("On-Peak", "Off-Peak")
+
+graphic_nb <- 1
+plts <- vector("list", 4)
+labels <- c("Optimal", "Actual")
+for (y in years) {
+    for (p in period_types) {
+        values <- c(
+            # Optimal margin
+            (group_by(df_margins, year, periodtype) %>% 
+                 summarize(opt_margin = sum(opt_margin)) %>% 
+                 filter(year == y & periodtype == p))$opt_margin / 1e6, 
+            # Actual margin
+            -(group_by(df_margins, year, periodtype) %>% 
+                 summarize(act_margin = sum(act_margin)) %>% 
+                 filter(year == y & periodtype == p))$act_margin / 1e6
+            )
+        plt <- waterfall(values = values, 
+                  labels = labels,
+                  rect_text_labels = paste0(formatC(values, format = "f", big.mark = ",", digits = 2)),
+                  fill_colours = colorRampPalette(c(LightGreyPyxidr, LightGreyPyxidr))(length(values)),
+                  rect_border = BluePyxidr,
+                  fill_by_sign = FALSE,
+                  calc_total = TRUE,
+                  total_rect_text = paste0(formatC(sum(values), format = "f", big.mark = ",", digits = 2)),
+                  total_rect_color = BluePyxidr) +
+            labs(title=paste0(y, ": ", p, " periods"))
+
+        plts[[graphic_nb]] <- plt
+        graphic_nb <- graphic_nb + 1
+    }
+}
+
+grid.arrange(plts[[1]], plts[[2]], plts[[3]], plts[[4]],
+             nrow = 2, ncol = 2,
+             top = textGrob("Dispatch opportunities ($ millions)",gp=gpar(fontsize=20,font=3)))
+
+remove(labels, values, graphic_nb, plt, plts)
+```
+
+# Appendix {.tabset .tabset-pills}
+
+## Vizualizing client's data
+
+It is always a good practice to visualize the raw data for spotting any discrepancies. Script `analyses.R` creates a data frame  `df_all` that includes all the client’s data. We can dump this data frame in a CSV file that we can visualize in [Tableau Public](https://public.tableau.com/en-us/s/) (or the paid version of Tableau).
+
+### Historical hourly spot (day ahead) power prices
+
+On-peak prices are usually higher and more volatile than off-peak ones. Negative prices are due to excess of renewable energy, i.e., some thermal generating units are forced to shut down.
+
+Showing a time series of 2+ years of hourly prices could be messy. The idea is to aggregate hourly prices in a meaningful way. This graphic is a boxplot that shows the price distribution associated with each month by period type (i.e., on-peak and off-peak). This way, we can easily see their variance and seasonality.
+```{r plt_actual_da_power_prices, echo=FALSE, message=FALSE, warning=FALSE, fig.height=6}
+ggplot(df_all %>% filter(gu == df_tgu$name), aes(x = substr(monthid, 4, 7), y = power)) + 
+    geom_boxplot(aes(group = monthid)) +
+    labs(x = "Months", y = "Day ahead hourly power prices ($/MWh)") +
+    ylim(-50, 100) +
+    theme_economist() +
+    facet_grid(periodtype ~ .)
+```
+
+### Historical spot daily gas prices
+
+```{r plt_actual_gas_prices, echo=FALSE, message=FALSE, warning=FALSE}
+plt_single_ts(xts(df_gas[, -1], order.by = as.POSIXct(df_gas$date)),
+              xlabel = "Dates", ylabel = "$/mmBtu")
+```
+
+### Historical spot daily carbon prices
+
+```{r plt_actual_carbon_prices, echo=FALSE, message=FALSE, warning=FALSE}
+plt_single_ts(xts(df_carbon[, -1], order.by = as.POSIXct(df_carbon$date)),
+              xlabel = "Dates", ylabel = "$/tonne")
+```
+
+### Historical hourly generation
+
+We expect generation to be lower during off-peak hours than on-peak ones. We use the same graphics used to show spot hourly power prices.
+
+We observe that few hours have generation exceeding the installed capacity of `r df_tgu$duct`. We have 2 hours in November 2015 and 2016 that represent the sum of 2 hours due to a time change. Dealing with hourly time series often involves dealing with time changes and time zones. 
+
+```{r plt_actuall_generation, echo=FALSE, message=FALSE, warning=FALSE, fig.height=6}
+ggplot(df_all %>% filter(gu == df_tgu$name), aes(x = substr(monthid, 4, 7), y = generation)) + 
+    geom_boxplot(aes(group = monthid)) +
+    labs(x = "Months", y = "Hourly generation (MWh)") +
+    theme_economist() +
+    facet_grid(periodtype ~ .)
+```

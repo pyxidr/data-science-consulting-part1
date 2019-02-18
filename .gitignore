@@ -1,0 +1,28 @@
+## Files to be ignored by GIT
+
+# MacOS
+Icon?
+.DS_Store
+
+# R
+.RData
+.Rhistory
+*.nb.html
+*.html
+!header.html
+!footer.html
+!analyses.html
+
+# Python
+*.pyc
+*.log
+
+# SQLite
+*.db
+
+# Google docs
+*.gdoc
+
+# Folders to be ignored by GIT
+.Rproj.user
+__pycache__

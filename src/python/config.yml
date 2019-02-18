@@ -1,0 +1,25 @@
+# --------------------------------------------------
+# Configuration file associated with make_dataset.py
+# --------------------------------------------------
+
+# Global Parameters
+Parameters:
+    # The following 4 parameters are used to produce utility tables
+    StartDate: "2013-01-01"
+    EndDate: "2017-12-31"
+    StartPeak: 6
+    EndPeak: 21
+    # SQL files used to create the database
+    SQLFiles:
+        - '../sql/create_tables.sql'
+
+
+# Client's data files
+Client:
+  Prices:
+      Daily:
+          - "../../data/client/gas and carbon prices.xlsx"
+      Hourly:
+          - "../../data/client/power prices.xlsx"
+  Generation:
+      - "../../data/client/generation.xlsx"
