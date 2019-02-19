@@ -105,7 +105,7 @@ These instructions will get you a copy of the project on your machine.
 
 ### Prerequisites
 
-We would have used [Docker](https://www.docker.com/what-docker) if it was popular among management consultants — it allows you to automatically install the various applications and packages required for a given project without interfering with your current environment.
+We would have used [Docker](https://www.docker.com/what-docker) if it was more popular among management consultants — it allows you to automatically install the various applications and packages required for a given project without interfering with your current environment.
 
 You need at least to install the following software:
 
