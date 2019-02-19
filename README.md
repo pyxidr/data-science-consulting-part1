@@ -15,7 +15,7 @@
 
 ## Introduction
 
-You may have realized as a management consultant at the analyst/associate level that a decent knowledge of data science would have been instrumental in some client engagements for achieving high impact analyses. How often did your analysis requires processing a large amount of data too big for Excel but not big enough to be called Big Data — the “not so Big Data” challenge? When did you wish you knew more than a regression analysis for identifying relationships? How clueless were you when your manager asked you to do an optimal allocation of 100+ resources? How frustrated were you of not finding a way to present data that made your insights obvious? How disappointed was the client when you told her that she could not use your work in exploitation?
+You may have realized as a management consultant at the analyst/associate level that a decent knowledge of data science would have been instrumental in some client engagements for achieving high impact analyses. How often did your analysis requires processing a large amount of data too big for Excel but not big enough to be called Big Data — the “not so Big Data” challenge? When did you wish you knew more than a regression analysis for identifying relationships? How clueless were you when your manager asked you to do an optimal allocation of 100+ resources? How frustrated were you of not finding a way to present data that made your insights obvious? How disappointed was the client when you told her that she could not use your work in production?
 
 However, you are asking yourself which skills I need to acquire and how deep I need to be to be impactful. We have experienced situations where the client expected the consultant to have strong business acumen and outstanding analytics, be the expert in machine learning and statistics, and have better than average programming skills. While some individuals are real polymaths, most of us need to make some compromises. Do you want to be a translator or a data scientist? It is easier for a consultant without a strong background in computer science (or related disciplines) to aspire to be a translator than a data scientist. We suggest wanting to be between a translator and a data scientist, i.e., putting an emphasis on business intelligence and analytics, and learning just enough about programming, statistics, machine learning, or mathematical programming to quickly get to the right insights. If you are a consultant at a top management consulting firm, you already have the intrinsics required for business intelligence and analytics. Experience, curiosity, and creativity will make you better at these skills. The other abilities are complementary but can make a meaningful difference if you are time/budget constrained. A short engagement with high impact usually leads to a proper one as you have now persuaded the client about the benefits. After you have convinced the client about the opportunities, you can always help her structure the critical elements of a project that will involve experts in programming, machine learning, etc., to have a “production” version of your “proof-of-concept”.
 
@@ -89,6 +89,8 @@ To perform the analysis, the client provides the historical spot prices associat
 
 ### Data wrangling
 
+Our objective is to structure the client's data correctly and produce informative labels (e.g., types of periods for time series) such that it will be easy for us to do our analysis.
+
 We have implemented a script in Python `src/python/make_dataset.py` that reads the client's Excel files and populates an SQL database. We create first the database by running the SQL code in `src/sql/create_tables.sql`. We have documented both the script and sql code — please refer to the code for more details.
 
 ### Analyses and communication
@@ -124,9 +126,9 @@ If you are on Windows, you can get Git and GNU Make (and other Unix utilities) b
 
 ### Installing
 
-TBD — installing from GitHub
+You need to clone the Git repository by running `git clone https://github.com/pyxidr/data-science-consulting-part1.git` or downloading it directly from [GitHub](https://github.com/pyxidr/data-science-consulting-part1).
 
-Requirements.txt: `conda install --yes --file requirements.txt` or ` pip install -r requirements.txt`
+To ensure you have all the Python packages, run the following in the root directory: `conda install --yes --file requirements.txt` or `pip install -r requirements.txt`
 
 ### Building the database
 
@@ -134,23 +136,24 @@ There are 2 approaches:
 
 #### Using GNU Make
 
-In the root directory (where you will find the file `Makefile`), run simply `make populate_db`.
+In the root directory (where you will find the file `Makefile`), run simply `make make_dataset`.
 
 #### Manually
 
-In folder `data/processed`, run the following commands:
+In the root directory, run the following commands:
 
-1. `sqlite3 tutorial1.db`
-2. `.read ../../src/sql/create_tables.sql`
-6. `.quit`
-7. `cd ../../src/python`
-8. `python make_dataset.py -d ../../data/processed/tutorial1.db -p "../../data/client" -V`
+1. `cd data/processed`
+2. `sqlite3 tutorial1.db`
+3. `.read ../../src/sql/create_tables.sql`
+4. `.quit`
+5. `cd ../../src/python`
+6. `python make_dataset.py -d ../../data/processed/tutorial1.db -V`
 
 You can compact the database by running `sqlite3 tutorial1.db 'VACUUM;'` in folder `data/processed`.
 
 ### Running the analyses
 
-In RStudio, open project `notebooks/r/R.Rproj` and file `notebooks/r/analyses_v1.Rmd`. Once you have opened this file, click on button Knit to produce an html version of the notebook.
+In RStudio, open project `notebooks/r/R.Rproj` and then file `notebooks/r/analyses_v1.Rmd`. Once you have opened this file, click on button Knit to produce an html version of the notebook.
 
 <a name="license" />
 
